@@ -1303,7 +1303,21 @@ proc addMove { sq1 sq2 {animate ""}} {
     sc_move addSan null
   } else {
     # if {[winfo exists .commentWin]} { .commentWin.cf.text delete 0.0 end }
-    sc_move add $sq1 $sq2 $promo
+
+    set castle 0
+    if {[sc_move duplicate $sq1 $sq2] == 1} {
+       set answer [tk_messageBox -message "Did you castle?" -type yesno -icon question]
+       switch -- $answer {
+           yes {set castle 1}
+           no {set castle 0}
+       }
+    }
+    if {[sc_move inplace $sq1] == 1} {
+       set castle 1
+    }
+    sc_move add $sq1 $sq2 $promo $castle
+
+
     set san [sc_game info previous]
     if {$action == "mainline"} {
       sc_var exit
@@ -1472,7 +1486,7 @@ proc releaseSquare {w x y} {
 
   if { [winfo exists .calvarWin] } { return }
 
-  global selectedSq bestSq
+  global selectedSq bestSq currentSq
 
   ::board::setDragSquare $w -1
   set square [::board::getSquare $w $x $y]
@@ -1482,6 +1496,20 @@ proc releaseSquare {w x y} {
   }
 
   if {$square == $selectedSq} {
+    set castle 0
+    if {[sc_move inplace $square] == 1} {
+	set answer [tk_messageBox -message $DidYouCastle -type yesno -icon question]
+	switch -- $answer {
+	    yes {
+		set selectedSq -1
+		::board::colorSquare $w $square
+
+		addMove $square $square -animate
+		enterSquare $square
+	    }
+	    no {}
+	}
+   } else {
     if {$::suggestMoves} {
       # User pressed and released on same square, so make the
       # suggested move if there is one:
@@ -1494,6 +1522,7 @@ proc releaseSquare {w x y} {
       # Current square is the square user pressed the button on,
       # so we do nothing.
     }
+   }
   } else {
     if {$selectedSq == -1} {
       return

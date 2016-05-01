@@ -165,7 +165,7 @@ writeSimpleMove (FILE * fp, simpleMoveT * sm)
     writeOneByte (fp, sm->capturedPiece);
 
     writeOneByte (fp, sm->promote);
-    writeOneByte (fp, 0);     // Obsolete unused value
+    writeOneByte (fp, sm->castling960);
 
     writeOneByte (fp, sm->capturedSquare);
     writeOneByte (fp, sm->castleFlags);
@@ -192,7 +192,7 @@ readSimpleMove (FILE * fp, simpleMoveT * sm)
     sm->capturedPiece = readOneByte (fp);
 
     sm->promote = readOneByte (fp);
-    readOneByte (fp);   // Obsolete unused value
+    sm->castling960 = readOneByte (fp);
 
     sm->capturedSquare = readOneByte (fp);
     sm->castleFlags = readOneByte (fp);

@@ -3160,6 +3160,9 @@ proc startAnalyzeMode {{n 0} {force 0}} {
     if {$analysis(has_setboard$n)} {
       sendToEngine $n "setboard [sc_pos fen]"
     }
+    # fixme Xboard engines must be init here with chess960
+    # - test whether they support "variant fischerrandom"
+
     if { $analysis(has_analyze$n) } {
       # why is this commented out. It crashes engine when re-instated S.A
       #updateAnalysis $n
@@ -3631,8 +3634,12 @@ proc updateAnalysis {{n 0} {reset 1}} {
     # proc is called for any change in board position (including new games, and simple moves)
     set nonStdStart [sc_game startBoard]
     if {$nonStdStart} {
+      # todo - fixme. This is not accurate. In position.[h,cpp], chess960 is implementing it's own bool, StandardPosition,
+      # which is separate from [sc_game startBoard] which we are using here.
+      sendToEngine $n "setoption name UCI_Chess960 value true"
       set analysis(startpos$n) "fen [sc_game startPos]"
     } else {
+      sendToEngine $n "setoption name UCI_Chess960 value false"
       set analysis(startpos$n) startpos
     }
   }
@@ -3727,12 +3734,16 @@ proc updateAnalysis {{n 0} {reset 1}} {
 	if {$analysis(isCrafty$n)} {
           sendToEngine $n "mn [sc_pos moveNumber]"
         }
+
+        if {$nonStdStart} {
+	  sendToEngine $n "variant fischerrandom"
+        }
+
 	sendToEngine $n analyze
 	return
       }
       
       ### Ok- no "setboard"
-
       if {$nonStdStart} {
         set analysis(moves$n) "  Sorry, this game has a non-standard start position."
         updateAnalysisText $n
@@ -3772,6 +3783,10 @@ proc updateAnalysis {{n 0} {reset 1}} {
 	}
 	
       }
+
+      if { [sc_game info standard] == 0 } {
+	sendToEngine $n "variant fischerrandom"
+      }
       
       sendToEngine $n analyze
       
@@ -3788,6 +3803,11 @@ proc updateAnalysis {{n 0} {reset 1}} {
       if {(!$windowsOS)  &&  $analysis(send_sigint$n)} {
 	catch {exec -- kill -s INT [pid $analysis(pipe$n)]}
       }
+
+      if { [sc_game info standard] == 0 } {
+	sendToEngine $n "variant fischerrandom"
+      }
+
       sendToEngine $n new
       sendToEngine $n force
       if { $nonStdStart && ! $analysis(has_setboard$n) } {
@@ -3795,6 +3815,7 @@ proc updateAnalysis {{n 0} {reset 1}} {
 	updateAnalysisText $n
 	return
       }
+
       if {$analysis(has_setboard$n)} {
 	sendToEngine $n "setboard [sc_pos fen]"
       } else  {

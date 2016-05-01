@@ -45,7 +45,8 @@ const uint
     FEN_COMPACT = 0,
     FEN_BOARD = 1,
     FEN_CASTLING_EP = 2,
-    FEN_ALL_FIELDS = 3;
+    FEN_ALL_FIELDS = 3,
+    FEN_XFEN = 4;
 
 
 // Flags that Position::GenerateMoves() recognises:
@@ -103,12 +104,16 @@ private:
     byte            Castling;       // castling flags
     bool            StrictCastling; // If false, allow castling after moving
                                         // the King or Rook.
+    squareT         WKRStart, BKRStart, WQRStart, BQRStart; // The initial squares
+                                                            // of the rooks  
 
     uint            Hash;           // Hash value.
     uint            PawnHash;       // Pawn structure hash value.
 
     MoveList        LegalMoves;     // list of legal moves
 
+    bool            StandardPosition; // Normal game or Chess960
+    
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     //  Position:  Private Functions
 
@@ -117,6 +122,8 @@ private:
 
     inline void AddToBoard (pieceT p, squareT sq);
     inline void RemoveFromBoard (pieceT p, squareT sq);
+    inline void AddToBoard960 (pieceT p, squareT sq);
+    inline void RemoveFromBoard960 (pieceT p, squareT sq);
 
     void  CalcPinsDir (directionT dir, pieceT attacker);
 
@@ -126,8 +133,8 @@ private:
     void  GenKnightMoves (MoveList * mlist, colorT c, squareT sq,
                           SquareSet * sqset, bool capturesOnly);
 
-    void  AddLegalMove (MoveList * mlist, squareT from, squareT to, pieceT promo);
-    void  GenCastling (MoveList * mlist);
+    void  AddLegalMove (MoveList * mlist, squareT from, squareT to, pieceT promo, bool castling);
+    void  Gen960Castling (MoveList * mlist);
     void  GenKingMoves (MoveList * mlist, genMovesT genType, bool castling);
     void  AddPromotions (MoveList * mlist, squareT from, squareT dest);
     bool  IsValidEnPassant (squareT from, squareT to);
@@ -178,6 +185,16 @@ public:
     void        SetPlyCounter (ushort x) { PlyCounter = x; }
     ushort      GetPlyCounter ()         { return PlyCounter; }
     ushort      GetFullMoveCount ()      { return PlyCounter / 2 + 1; }
+    MoveList    GetLegalMoves ()         { return LegalMoves; }
+    void        SetWKRStart (squareT s)  { WKRStart = s; }
+    void        SetBKRStart (squareT s)  { BKRStart = s; }
+    void        SetWQRStart (squareT s)  { WQRStart = s; }
+    void        SetBQRStart (squareT s)  { BQRStart = s; }
+    squareT     GetWKRStart ()  { return WKRStart; }
+    squareT     GetBKRStart ()  { return BKRStart; }
+    squareT     GetWQRStart ()  { return WQRStart; }
+    squareT     GetBQRStart ()  { return BQRStart; }
+    bool        GetStandardPosition () { return StandardPosition; }
 
     // Methods to get the Board or piece lists -- used in game.cpp to
     // decode moves:

@@ -2587,6 +2587,8 @@ proc ::board::animate {w oldboard newboard} {
   if {$diffcount == 4} {
     # Check for making/unmaking a castling move
 
+    set normalcastle 0
+
     set oldlower [string tolower $oldboard]
     set newlower [string tolower $newboard]
 
@@ -2602,6 +2604,7 @@ proc ::board::animate {w oldboard newboard} {
           eval $w.bd coords p$rto [::board::midSquare $w $rfrom]
           set from $kfrom
           set to $kto
+          set normalcastle 1
         } elseif {[string index $newlower $kfrom] == {k}  &&
 	    [string index $newlower $rfrom] == {r}  &&
 	    [string index $oldlower $kto] == {k}  &&
@@ -2609,6 +2612,42 @@ proc ::board::animate {w oldboard newboard} {
           # An undo-castling animation. No need to move the rook.
           set from $kto
           set to $kfrom
+          set normalcastle 1
+        }
+      }
+    }
+    if {$normalcastle == 0} {
+      set oldcount 0
+      set newcount 0
+      for {set i 0} {$i < $diffcount} {incr i} {
+        if {$old($i) != "."} {
+          set oldone($oldcount) $old($i)
+          set oldsquare($oldcount) $sq($i)
+          incr oldcount
+        }
+        if {$new($i) != "."} {
+          set newone($newcount) $new($i)
+          set newsquare($newcount) $sq($i)
+          incr newcount
+        }
+      }
+      if {([string tolower $oldone(0)] == "r" && [string tolower $oldone(1)] == "k" && 
+           [string tolower $newone(0)] == "k" && [string tolower $newone(1)] == "r") ||
+          ([string tolower $oldone(0)] == "k" && [string tolower $oldone(1)] == "r" && 
+           [string tolower $newone(0)] == "r" && [string tolower $newone(1)] == "k")} {
+        if {($newone(0) == "k" || $newone(1) == "k") && $newsquare(0) >= [sq a8] && $newsquare(1) >= [sq a8]} {
+        } else {
+          if {($newone(0) == "K" || $newone(1) == "K") && $newsquare(0) <= [sq h1] && $newsquare(1) <= [sq h1]} {
+         } else {
+              return
+            }
+          }
+        if {[string tolower $oldone(0)] == "k"} {
+          set from $newsquare(0)
+          set to $newsquare(1) 
+        } else {
+          set from $newsquare(1)
+          set to $newsquare(0) 
         }
       }
     }
@@ -2616,6 +2655,7 @@ proc ::board::animate {w oldboard newboard} {
 
   if {$diffcount == 3} {
     # Three squares are different, so check for an En Passant capture:
+    set enpassant 0
     foreach i {0 1 2} {
       foreach j {0 1 2} {
         foreach k {0 1 2} {
@@ -2627,6 +2667,7 @@ proc ::board::animate {w oldboard newboard} {
             ($old($i) == "P" && $old($k) == "p"))} {
             set from $sq($i)
             set to $sq($j)
+            set enpassant 1
           }
           # Check for undoing an en-passant capture from j to i with
           # the enemy pawn on k:
@@ -2637,7 +2678,43 @@ proc ::board::animate {w oldboard newboard} {
             set to $sq($j)
             set captured $sq($k)
             set capturedPiece $new($k)
+            set enpassant 1
           }
+        }
+      }
+    }
+    if {$enpassant == 0} {
+      set oldcount 0
+      set newcount 0
+      for {set i 0} {$i < $diffcount} {incr i} {
+        if {$old($i) != "."} {
+          set oldone($oldcount) $old($i)
+          set oldsquare($oldcount) $sq($i)
+          incr oldcount
+        }
+        if {$new($i) != "."} {
+          set newone($newcount) $new($i)
+          set newsquare($newcount) $sq($i)
+          incr newcount
+        }
+      }
+      if {([string tolower $oldone(0)] == "r" && [string tolower $oldone(1)] == "k" && 
+           [string tolower $newone(0)] == "k" && [string tolower $newone(1)] == "r") ||
+          ([string tolower $oldone(0)] == "k" && [string tolower $oldone(1)] == "r" && 
+           [string tolower $newone(0)] == "r" && [string tolower $newone(1)] == "k")} {
+        if {($newone(0) == "k" || $newone(1) == "k") && $newsquare(0) >= [sq a8] && $newsquare(1) >= [sq a8]} {
+        } else {
+          if {($newone(0) == "K" || $newone(1) == "K") && $newsquare(0) <= [sq h1] && $newsquare(1) <= [sq h1]} {
+         } else {
+              return
+            }
+          }
+        if {[string tolower $oldone(0)] == "k"} {
+          set from $newsquare(0)
+          set to $newsquare(1) 
+        } else {
+          set from $newsquare(1)
+          set to $newsquare(0) 
         }
       }
     }
@@ -2648,6 +2725,25 @@ proc ::board::animate {w oldboard newboard} {
     # same (non-empty) piece as the other new square, and at least one
     # of the old or new squares should be empty.
 
+   if {([string tolower $old(0)] == "r" && [string tolower $old(1)] == "k" && 
+        [string tolower $new(0)] == "k" && [string tolower $new(1)] == "r") ||
+        ([string tolower $old(0)] == "k" && [string tolower $old(1)] == "r" && 
+        [string tolower $new(0)] == "r" && [string tolower $new(1)] == "k")} {
+        if {($new(0) == "k" || $new(1) == "k") && $sq(0) >= [sq a8] && $sq(1) >= [sq a8]} {
+        } else {
+            if {($new(0) == "K" || $new(1) == "K") && $sq(0) <= [sq h1] && $sq(1) <= [sq h1]} {
+            } else {
+                return
+            }
+        }
+        if {[string tolower $old(0)] == "k"} {
+            set from $sq(0)
+            set to $sq(1) 
+        } else {
+            set from $sq(1)
+            set to $sq(0) 
+        }
+    } else { 
     if {$old(0) != "." && $old(1) != "." && $new(0) != "." && $new(1) != "."} {
       return
     }
@@ -2683,6 +2779,7 @@ proc ::board::animate {w oldboard newboard} {
         }
       }
     }
+  }
   }
 
   # Check that we found a valid-looking move to animate:

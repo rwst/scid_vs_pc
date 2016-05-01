@@ -1714,6 +1714,8 @@ translate W IESynchronise {Synkronisera}
 translate W IERotate  {Rotera}
 translate W IEUnableToStart {Kan inte starta Inmatningsmotor:}
 translate W DoneWithPosition {Klar med position}
+# ====== TODO To be translated ======
+translate W DidYouCastle {Did you castle?}
 translate W Board {Bräde}
 translate W showGameInfo {Visa partiinformation}
 translate W autoResizeBoard {Ändra storleken på brädet automatiskt}

@@ -43,15 +43,21 @@ struct simpleMoveT
     squareT  capturedSquare; // ONLY different to "to" field if this capture
                             //    is an en passant capture.
     byte     castleFlags;    // pre-move information
+    bool     castling960;
     squareT  epSquare;       // pre-move information
     ushort   oldHalfMoveClock;
     int      score;          // used for alpha/beta ordering.
+        
+    simpleMoveT() 
+    {
+        castling960 = false;
+    }
 };
 
 inline bool isNullMove (simpleMoveT * sm)
 {
-    return (sm->from == sm->to  &&  sm->from != NULL_SQUARE
-              &&  piece_Type(sm->movingPiece) == KING);
+  return (sm->from != NULL_SQUARE && 
+          sm->from == sm->to && (!(piece_Type(sm->movingPiece) == KING && sm->castling960 == true)));
 }
 
 #ifdef WINCE

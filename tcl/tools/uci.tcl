@@ -35,6 +35,7 @@ namespace eval uci {
     set uciInfo(scoremate$n) ""
     set uciInfo(currmove$n) ""
     set uciInfo(currmovenumber$n) 0
+    set uciInfo(chess960$n) 0
     # hmmm
     # set uciInfo(score$n) ""
   }
@@ -62,6 +63,9 @@ namespace eval uci {
   # This distinction allows tacGame::Toga and F2 to run at the same time
 
   # todo: sort out the analyze var with computer tournament feature &&&
+
+set ::ccg 0
+set ::ccc 0
 
   proc processAnalysisInput { {n 1} {gui 1} } {
     global analysis annotate comp ::uci::uciInfo ::uci::optionToken 
@@ -303,8 +307,17 @@ namespace eval uci {
 
       # convert to something more readable
       if ($toBeFormatted) {
+incr ::ccc
+incr ::ccg [lindex [time {
         set uciInfo(pv$n) [formatPv $n $uciInfo(pv$n)]
         set toBeFormatted 0
+}] 0]
+if {$::ccc == 20} {
+set ::ccc 0
+puts "avg [expr $::ccg / 20]"
+set ::ccg 0
+}
+
       }
 
       set idx [ expr $uciInfo(multipv$n) -1 ]
@@ -814,6 +827,7 @@ namespace eval uci {
 
   proc sendUCIoptions {n} {
     global analysis
+
     set engineData [ lindex $::engines(list) $n ]
     set options [ lindex $engineData 8 ]
     foreach opt $options {
@@ -974,6 +988,10 @@ namespace eval uci {
   # returns 1 if an error occured when entering a move
   ################################################################################
   proc sc_move_add { moves } {
+    sc_move addUCI $moves
+    return 0
+
+# todo fixme
 
     foreach m $moves {
       # get rid of leading piece
@@ -981,10 +999,8 @@ namespace eval uci {
       if {$c in {K Q R B N}} {
         set m [string range $m 1 end]
       }
-      set s1 [string range $m 0 1]
-      set s1 [::board::sq $s1]
-      set s2 [string range $m 2 3]
-      set s2 [::board::sq $s2]
+      set s1 [::board::sq [string range $m 0 1]]
+      set s2 [::board::sq [string range $m 2 3]]
       if {[string length $m] > 4} {
         set promo [string range $m 4 end]
         # inverse transformation : const char PIECE_CHAR [] = "xKQRBNP.xkqrbnpxMm";
@@ -1000,9 +1016,12 @@ namespace eval uci {
           n { set p 5}
           default {puts "Promo error $promo for moves $moves"}
         }
-        if { [catch { sc_move add $s1 $s2 $p } ] } { return 1 }
+
+	if { [catch { sc_move addUCI $m } ] } { return 1 }
+        # if { [catch { sc_move add $s1 $s2 $p } ] } { return 1 }
       } else  {
-        if { [catch { sc_move add $s1 $s2 0 } ] } { return 1 }
+	if { [catch { sc_move addUCI $m } ] } { return 1 }
+        # if { [catch { sc_move add $s1 $s2 0 } ] } { return 1 }
       }
     }
     return 0

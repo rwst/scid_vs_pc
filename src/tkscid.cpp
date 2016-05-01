@@ -9999,11 +9999,11 @@ sc_move (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
 {
     static const char * options [] = {
         "add", "addSan", "addUCI", "back", "end", "forward",
-        "pgn", "ply", "start", NULL
+        "pgn", "ply", "start", "duplicate", "inplace", NULL
     };
     enum {
         MOVE_ADD, MOVE_ADDSAN, MOVE_ADDUCI, MOVE_BACK, MOVE_END, MOVE_FORWARD,
-        MOVE_PGN, MOVE_PLY, MOVE_START
+        MOVE_PGN, MOVE_PLY, MOVE_START, MOVE_DUPLICATE, MOVE_INPLACE
     };
     int index = -1;
 
@@ -10022,6 +10022,9 @@ sc_move (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
     case MOVE_BACK:
         return sc_move_back (cd, ti, argc, argv);
 
+    case MOVE_DUPLICATE:
+        return sc_move_duplicate (cd, ti, argc, argv);
+
     case MOVE_END:
         db->game->MoveToPly(0);
         {
@@ -10035,6 +10038,9 @@ sc_move (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
     case MOVE_FORWARD:
         return sc_move_forward (cd, ti, argc, argv);
 
+    case MOVE_INPLACE:
+        return sc_move_inplace (cd, ti, argc, argv);
+    
     case MOVE_PGN:
         return sc_move_pgn (cd, ti, argc, argv);
 
@@ -10060,32 +10066,40 @@ sc_move (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// sc_move_add: takes a move specified by three parameters
-//      (square square promo) and adds it to the game.
+// sc_move_add: takes a move specified by four parameters
+//      (square square castling promo) and adds it to the game.
 int
 sc_move_add (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
 {
 
-    if (argc != 5) {
-        return errorResult (ti, "Usage: sc_move add <sq> <sq> <promo>");
+    if (argc != 6) {
+        return errorResult (ti, "Usage: sc_move add <sq> <sq> <promo> <castle>");
     }
 
     uint sq1 = strGetUnsigned (argv[2]);
     uint sq2 = strGetUnsigned (argv[3]);
     uint promo = strGetUnsigned (argv[4]);
     if (promo == 0) { promo = EMPTY; }
+    uint castle = strGetUnsigned (argv[5]);
+    if (castle == 0) { castle = EMPTY; }
 
     char s[8];
     s[0] = square_FyleChar (sq1);
     s[1] = square_RankChar (sq1);
     s[2] = square_FyleChar (sq2);
     s[3] = square_RankChar (sq2);
-    if (promo == EMPTY) {
-        s[4] = 0;
+    if (castle == EMPTY ) {
+      s[4] = 'f';
     } else {
-        s[4] = piece_Char(promo);
+      s[4] = 't';
+    } 
+    if (promo == EMPTY) {
         s[5] = 0;
+    } else {
+        s[5] = piece_Char(promo);
+        s[6] = 0;
     }
+
     simpleMoveT sm;
     Position * pos = db->game->GetCurrentPos();
     errorT err = pos->ReadCoordMove (&sm, s, true);
@@ -10157,13 +10171,22 @@ sc_move_addUCI (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
         ptr += 4;
       } else {
         s[4] = ptr[4];
-        s[5] = 0;
-        ptr += 6;
+        if (ptr[5] == ' ') {
+	  s[5] = 0;
+	  ptr += 6;
+        } else if (ptr[5] == 0) {
+	  s[5] = 0;
+	  ptr += 5;
+        } else { 
+          // oops 
+          break;
+        }
       }
       simpleMoveT sm;
       Position * pos = db->game->GetCurrentPos();
       errorT err = pos->ReadCoordMove (&sm, s, true);
       if (err == OK) {
+// fixme printf ("%s ok\n",s);
         err = db->game->AddMove (&sm, NULL);
         if (err == OK) {
             db->gameAltered = true;
@@ -10175,6 +10198,7 @@ sc_move_addUCI (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
             break;
         }
       } else {
+printf ("%s fail\n",s);
         //Tcl_AppendResult (ti, "Error reading move(s): ", ptr, NULL);
         break;
       }
@@ -10206,6 +10230,39 @@ sc_move_back (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// sc_move_duplicate
+//
+// Takes two squares and returns true if there are two moves with those squares, false otherwise
+int
+sc_move_duplicate(ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
+{
+    if (argc != 4) {
+        return errorResult (ti, "Usage: sc_move duplicate <from sq> <to sq>");
+    }
+
+    uint tosq = strGetUnsigned (argv[2]);
+    uint fromsq = strGetUnsigned (argv[3]);
+    uint timesAppeared = 0;
+    
+    Position * pos = db->game->GetCurrentPos();
+    pos->GenerateMoves();
+    MoveList mList = pos->GetLegalMoves();
+    for (uint i=0; i < mList.Size(); i++) {
+      simpleMoveT * sm = mList.Get(i);
+      if (sm->to == tosq && sm->from == fromsq) {timesAppeared++;}
+    }	
+    if (timesAppeared == 0) {
+      for (uint i=0; i < mList.Size(); i++) {
+         simpleMoveT * sm = mList.Get(i);
+         if (sm->to == fromsq && sm->from == tosq) {timesAppeared++;}
+     }
+    }
+    if (timesAppeared > 1) {setBoolResult(ti, true);} else {setBoolResult(ti, false);}
+   
+    return TCL_OK;
+}
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // sc_move_forward:
 //    Moves forward a specified number of moves (default = 1 move).
 int
@@ -10228,6 +10285,33 @@ sc_move_forward (ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
     return TCL_OK;
 }
 
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// sc_move_inplace
+//
+// Takes one square and returns true if there are two moves with those squares, false otherwise
+int
+sc_move_inplace(ClientData cd, Tcl_Interp * ti, int argc, const char ** argv)
+{
+    if (argc != 3) {
+        return errorResult (ti, "Usage: sc_move inplace <sq>");
+    }
+
+    uint sq = strGetUnsigned (argv[2]);
+    
+    Position * pos = db->game->GetCurrentPos();
+    pos->GenerateMoves();
+     
+    MoveList mList = pos->GetLegalMoves();
+    for (uint i=0; i < mList.Size(); i++) {
+      simpleMoveT * sm = mList.Get(i);
+      if (sm->to == sq && sm->from == sq) {
+        setBoolResult(ti, true);
+        return TCL_OK;
+      }
+    }	
+    setBoolResult(ti, false);
+    return TCL_OK;
+}
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // sc_move_pgn:
 //    Set the current board to the position closest to

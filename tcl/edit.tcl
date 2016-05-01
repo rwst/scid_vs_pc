@@ -411,7 +411,7 @@ proc check_epFile {a b c} {
   makeSetupFen
 }
 proc check_castling {a b c} {
-  ::utils::validate::Regexp {^(-|[KQkq]*)$} $a $b $c
+  ::utils::validate::Regexp {^(-|[KQkqa-hA-H]*)$} $a $b $c
   makeSetupFen
 }
 trace variable moveNum w check_moveNum

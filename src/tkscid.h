@@ -507,7 +507,9 @@ int sc_move_add       (TCL_ARGS);
 int sc_move_addSan    (TCL_ARGS);
 int sc_move_addUCI    (TCL_ARGS);
 int sc_move_back      (TCL_ARGS);
+int sc_move_duplicate (TCL_ARGS);
 int sc_move_forward   (TCL_ARGS);
+int sc_move_inplace   (TCL_ARGS);
 int sc_move_pgn       (TCL_ARGS);
 
 int sc_name           (TCL_ARGS);

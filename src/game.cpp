@@ -897,6 +897,7 @@ Game::SetMoveData (moveT * m, simpleMoveT * sm)
     newsm->to = sm->to;
     newsm->capturedPiece = sm->capturedPiece;
     newsm->promote = sm->promote;
+    newsm->castling960 = sm->castling960;
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -3768,14 +3769,19 @@ encodeKing (ByteBuffer * buf, simpleMoveT * sm)
         1, 2, 3, 0, 0, 0, 0, 9, 4, 0, 5, 10, 0, 0, 0, 0, 6, 7, 8
     };
 
+    if (diff >= -4 && diff <= 5  && sm->castling960) {
+      if (sm->to == C1 || sm->to == C8) {diff = -2; }
+      if (sm->to == G1 || sm->to == G8) {diff = 2; }
+    }
+    
     // If target square is the from square, it is the null move, which
     // is represented as a king move to its own square and is encoded
     // as the byte value zero.
-    if (sm->to == sm->from) {
+    if (sm->to == sm->from && diff != 2 && diff  != -2) {
         buf->PutByte (makeMoveByte (0, 0));
         return;
     }
-
+    
     // Verify we have a valid King move:
     ASSERT(diff >= -9  &&  diff <= 9  &&  val[diff+9] != 0);
     buf->PutByte (makeMoveByte (0, val [diff + 9]));
@@ -3792,12 +3798,33 @@ decodeKing (byte val, simpleMoveT * sm)
     };
 
     if (val == 0) {
-      sm->to = sm->from;  // Null move
-        return OK;
+      if (sm->to < H8) {
+        sm->to = sm->from;  // Null move
+        sm->castling960 = true;
+     }
+      return OK;
     }
-
     if (val < 1  ||  val > 10) { return ERROR_Decode; }
+    
     sm->to = sm->from + sqdiff[val];
+ 
+    if (sqdiff[val] == -2) {
+      sm->castling960 = true;
+      if (sm->from <= G1) {
+        sm->to = C1;
+      } else {
+        sm->to = C8;
+      }
+    }
+    if (sqdiff[val] == 2) {
+      sm->castling960 = true;
+      if (sm->from <= G1) {
+        sm->to = G1;
+      } else {
+        sm->to = G8;
+      }
+    }
+    
     return OK;
 }
 
@@ -4112,7 +4139,8 @@ decodeMove (ByteBuffer * buf, simpleMoveT * sm, byte val, Position * pos)
 
     sm->capturedPiece = EMPTY;
     sm->promote = EMPTY;
-
+    sm->castling960 = false;
+ 
     errorT err = OK;
     pieceT pt = piece_Type (sm->movingPiece);
     switch (pt) {

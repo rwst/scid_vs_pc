@@ -81,6 +81,31 @@ Position::RemoveFromBoard (pieceT p, squareT sq)
     UnHash (p, sq);
 }
 
+inline void
+Position::AddToBoard960 (pieceT p, squareT sq)
+{
+    Board[sq] = p;
+    NumOnRank[p][square_Rank(sq)]++;
+    NumOnFyle[p][square_Fyle(sq)]++;
+    NumOnLeftDiag[p][square_LeftDiag(sq)]++;
+    NumOnRightDiag[p][square_RightDiag(sq)]++;
+    NumOnSquareColor[p][square_Color(sq)]++;
+    AddHash (p, sq);
+}
+
+inline void
+Position::RemoveFromBoard960 (pieceT p, squareT sq)
+{
+    if (Board[sq] != p) { p = Board[sq]; }
+    Board[sq] = EMPTY;
+    NumOnRank[p][square_Rank(sq)]--;
+    NumOnFyle[p][square_Fyle(sq)]--;
+    NumOnLeftDiag[p][square_LeftDiag(sq)]--;
+    NumOnRightDiag[p][square_RightDiag(sq)]--;
+    NumOnSquareColor[p][square_Color(sq)]--;
+    UnHash (p, sq);
+}
+
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // initHashValues:
 //    Initialises the table of Zobrist hash values.
@@ -220,7 +245,7 @@ Position::CalcPinsDir (directionT dir, pieceT attacker)
 //      Add a legal move to the move list.
 //
 inline void
-Position::AddLegalMove (MoveList * mlist, squareT from, squareT to, pieceT promo)
+Position::AddLegalMove (MoveList * mlist, squareT from, squareT to, pieceT promo, bool castling)
 {
     ASSERT (mlist != NULL);
     simpleMoveT * sm = mlist->Add();
@@ -234,6 +259,7 @@ Position::AddLegalMove (MoveList * mlist, squareT from, squareT to, pieceT promo
     sm->promote = promo;
     sm->movingPiece = Board[from];
     sm->capturedPiece = Board[to];
+    sm->castling960 = castling;
 }
 
 
@@ -249,14 +275,13 @@ Position::GenSliderMoves (MoveList * mlist, colorT color, squareT fromSq,
     squareT dest = fromSq;
     squareT last = square_Last (fromSq, dir);
     int delta = direction_Delta (dir);
-
     while (dest != last) {
         dest += delta;
         pieceT p = Board[dest];
         if (p == EMPTY) {
             if (! capturesOnly) {
                 if (sqset == NULL  ||  sqset->Contains(dest)) {
-                    AddLegalMove (mlist, fromSq, dest, EMPTY);
+                    AddLegalMove (mlist, fromSq, dest, EMPTY, false);
                 }
             }
             continue;
@@ -264,7 +289,7 @@ Position::GenSliderMoves (MoveList * mlist, colorT color, squareT fromSq,
         // We have reached a piece. Add the capture if it is an enemy.
         if (piece_Color_NotEmpty(p) != color) {
             if (sqset == NULL  ||  sqset->Contains(dest)) {
-                AddLegalMove (mlist, fromSq, dest, EMPTY);
+                AddLegalMove (mlist, fromSq, dest, EMPTY, false);
             }
         }
         break;
@@ -288,63 +313,110 @@ Position::GenKnightMoves (MoveList * mlist, colorT c, squareT fromSq,
         if (capturesOnly  &&  p == EMPTY) { continue; }
         if (piece_Color(p) != c) {
             if (sqset == NULL  ||  sqset->Contains(dest)) {
-                AddLegalMove (mlist, fromSq, dest, EMPTY);
+                AddLegalMove (mlist, fromSq, dest, EMPTY, false);
             }
         }
     }
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// Position::GenCastling():
-//    Generate the legal castling moves.
+// Position::Gen960Castling():
+//    Generate the legal castling moves for chess960.
+//
+// Rules are:
+// 1)	Unmoved: The king and the castling rook must not have moved before in
+// the game, including castling.
+//
+// 2)	Unattacked: No square between the king's initial and final squares 
+// (including the initial and final squares) may be under attack by any opposing
+// piece.
+//
+// 3) Unimpeded: All the squares between the king's initial and final squares
+// (including the final square), and all of the squares between the rook's
+// initial and final squares (including the final square), must be vacant except
+// for the king and castling rook. An equivalent way of stating this is that the
+// smallest back rank interval containing the king, the castling rook, and their
+// destination squares contains no pieces other than the king and castling rook.
+//
 //    Assumes the side to move is NOT in check, so the caller
 //    should verify this first.
 //
+
 void
-Position::GenCastling (MoveList * mlist)
+Position::Gen960Castling (MoveList * mlist)
 {
     ASSERT (! IsKingInCheck());
     squareT from = GetKingSquare(ToMove);
-    if (from != (ToMove == WHITE ? E1 : E8))  { return; }
+    if (ToMove == WHITE) {
+        if (((from < B1) || (from > G1)) || Board[from] != WK) {return; }
+    } else {
+        if (((from < B8) || (from > G8)) || Board[from] != BK) {return; }
+    }
+    
     squareT enemyKingSq = GetEnemyKingSquare();
     squareT target, skip, rookSq;
-    pieceT rookPiece;
+    pieceT rookPiece, kingPiece;
 
-    // Try kingside first
-
-    // Kingside Castling:
-    if (!StrictCastling  ||  GetCastling (ToMove, KSIDE)) {
-        if (ToMove == WHITE) {
-            target = G1; skip = F1; rookSq = H1; rookPiece = WR;
-        } else {
-            target = G8; skip = F8; rookSq = H8; rookPiece = BR;
-        }
-        if (Board[target] == EMPTY  &&  Board[skip] == EMPTY
-                &&  Board[rookSq] == rookPiece
-                &&  CalcNumChecks (target) == 0
-                &&  CalcNumChecks (skip) == 0
-                &&  ! square_Adjacent (target, enemyKingSq)) {
-            AddLegalMove (mlist, from, target, EMPTY);
-        }
-    }
+    bool canCastle = true;
 
     // Queenside Castling:
     if (!StrictCastling  ||  GetCastling (ToMove, QSIDE)) {
         if (ToMove == WHITE) {
-            target = C1; skip = D1; rookSq = A1; rookPiece = WR;
+            target = C1; rookSq = WQRStart; rookPiece = WR; kingPiece = WK;
         } else {
-            target = C8; skip = D8; rookSq = A8; rookPiece = BR;
+            target = C8; rookSq = BQRStart; rookPiece = BR; kingPiece = BK;
         }
-        if (Board[target] == EMPTY  &&  Board[skip] == EMPTY
-                &&  Board[rookSq] == rookPiece
-                &&  Board[target - 1] == EMPTY // B1 or B8 must be empty too!
-                &&  CalcNumChecks (target) == 0
-                &&  CalcNumChecks (skip) == 0
-                &&  ! square_Adjacent (target, enemyKingSq)) {
-            AddLegalMove (mlist, from, target, EMPTY);
+        if (from == B1 || from == B8) {
+            if ((Board[target] == EMPTY) || (Board[target] == kingPiece) || (Board[target] == rookPiece)) {
+                if ((Board[target] != EMPTY) || (Board[target + 1] != EMPTY)) { canCastle = false; }
+                if (!(CalcNumChecks (target) == 0) || !(CalcNumChecks (from) == 0)) { canCastle = false; }
+                if (square_Adjacent (target, enemyKingSq) || square_Adjacent (from, enemyKingSq)) { canCastle = false; }
+                if ((Board[rookSq] == rookPiece) && canCastle) {
+                     AddLegalMove (mlist, from, target, EMPTY, true); 
+	        }
+            }
+        } else {
+	  if (!(from == target && Board[target + 1] != EMPTY)) {
+	    if ((Board[target] == EMPTY) || (Board[target] == kingPiece) || (Board[target] == rookPiece)) {
+	        for (skip = from - 1; skip > rookSq; skip--) {	
+                    if (Board[skip] != EMPTY) { canCastle = false; }
+                }
+                for (skip = from; skip >= target; skip--) {
+                    if (!(CalcNumChecks (skip) == 0) || square_Adjacent (skip, enemyKingSq)) { canCastle = false; }
+                }
+                if ((Board[rookSq] == rookPiece) && canCastle) {
+		     AddLegalMove (mlist, from, target, EMPTY, true); 
+	        }
+            }
+	  }
+        }
+    }
+
+    canCastle = true;
+
+    // Kingside Castling:
+    if (!StrictCastling  ||  GetCastling (ToMove, KSIDE)) {
+        if (ToMove == WHITE) {
+            target = G1; rookSq = WKRStart; rookPiece = WR; kingPiece = WK;
+        } else {
+            target = G8; rookSq = BKRStart; rookPiece = BR; kingPiece = BK;
+        }
+        if (!((from == target) && (Board[target - 1] != EMPTY))) {
+	  if ((Board[target] == EMPTY) || (Board[target] == kingPiece) || (Board[target] == rookPiece)) {
+            for (skip = from + 1; skip < rookSq; skip++) {
+                if (Board[skip] != EMPTY) { canCastle = false; }
+            }
+            for (skip = from; skip <= target; skip++) {
+                if (!(CalcNumChecks (skip) == 0) || square_Adjacent (skip, enemyKingSq)) { canCastle = false; }
+            }
+            if ((Board[rookSq] == rookPiece) && canCastle) {
+                AddLegalMove (mlist, from, target, EMPTY, true); 
+	    }
+	  }
         }
     }
 }
+
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // Position::GenKingMoves():
@@ -390,11 +462,11 @@ Position::GenKingMoves (MoveList * mlist, genMovesT genType, bool castling)
             Board[kingSq] = king;
             Board[destSq] = captured;
         }
-        if (addThisMove) { AddLegalMove (mlist, kingSq, destSq, EMPTY); }
+        if (addThisMove) { AddLegalMove (mlist, kingSq, destSq, EMPTY, false); }
         destPtr++;
     }
     // Now generate castling moves, if possible:
-    if (genNonCaptures  &&  castling) { GenCastling (mlist); }
+    if (genNonCaptures  &&  castling) { Gen960Castling (mlist); }  
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -408,10 +480,10 @@ Position::AddPromotions (MoveList * mlist, squareT from, squareT dest)
     ASSERT (piece_Type (Board[from]) == PAWN);
     ASSERT (square_Rank (dest) == RANK_1  ||  square_Rank (dest) == RANK_8);
 
-    AddLegalMove (mlist, from, dest, QUEEN);
-    AddLegalMove (mlist, from, dest, ROOK);
-    AddLegalMove (mlist, from, dest, BISHOP);
-    AddLegalMove (mlist, from, dest, KNIGHT);
+    AddLegalMove (mlist, from, dest, QUEEN, false);
+    AddLegalMove (mlist, from, dest, ROOK, false);
+    AddLegalMove (mlist, from, dest, BISHOP, false);
+    AddLegalMove (mlist, from, dest, KNIGHT, false);
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -480,13 +552,13 @@ Position::GenPawnMoves (MoveList * mlist, squareT from,
             if (square_Rank(dest) == promoRank) {
                 AddPromotions (mlist, from, dest);
             } else {
-                AddLegalMove (mlist, from, dest, EMPTY);
+                AddLegalMove (mlist, from, dest, EMPTY, false);
             }
         }
         if (square_Rank(from) == secondRank  &&  Board[dest] == EMPTY) {
             dest = square_Move (dest, forward);
             if (Board[dest]==EMPTY  &&  (sqset==NULL || sqset->Contains(dest))) {
-                AddLegalMove (mlist, from, dest, EMPTY);
+                AddLegalMove (mlist, from, dest, EMPTY, false);
             }
         }
     }
@@ -505,7 +577,7 @@ Position::GenPawnMoves (MoveList * mlist, squareT from,
             if (square_Rank(dest) == promoRank) {
                 AddPromotions (mlist, from, dest);
             } else {
-                AddLegalMove (mlist, from, dest, EMPTY);
+                AddLegalMove (mlist, from, dest, EMPTY, false);
             }
         }
     }
@@ -516,7 +588,7 @@ Position::GenPawnMoves (MoveList * mlist, squareT from,
             if (square_Rank(dest) == promoRank) {
                 AddPromotions (mlist, from, dest);
             } else {
-                AddLegalMove (mlist, from, dest, EMPTY);
+                AddLegalMove (mlist, from, dest, EMPTY, false);
             }
         }
     }
@@ -568,8 +640,12 @@ Position::Init (void)
     // Setting up a valid board is left to StdStart() or Clear().
     Board [COLOR_SQUARE] = EMPTY;
     Board [NULL_SQUARE] = END_OF_BOARD;
-	LegalMoves.Clear();
+    LegalMoves.Clear();
     StrictCastling = true;
+    WKRStart = NS;
+    BKRStart = NS;
+    WQRStart = NS;
+    BQRStart = NS;
 
     // Make sure all tables used for move generation, hashing,
     // square tests, etc have been computed:
@@ -604,7 +680,7 @@ Position::Clear (void)
     HalfMoveClock = 0;
     Hash = 0;
     PawnHash = 0;
-	LegalMoves.Clear();
+    LegalMoves.Clear();
     return;
 }
 
@@ -654,6 +730,8 @@ Position::StdStart (void)
         Castling = 0;
         SetCastling (WHITE, QSIDE, true);  SetCastling (WHITE, KSIDE, true);
         SetCastling (BLACK, QSIDE, true);  SetCastling (BLACK, KSIDE, true);
+        SetWQRStart (A1); SetBKRStart (H8); SetBQRStart (A8); SetWKRStart (H1);
+
         EPTarget = NULL_SQUARE;
         ToMove = WHITE;
         PlyCounter = 0;
@@ -661,6 +739,7 @@ Position::StdStart (void)
         Board [NULL_SQUARE] = END_OF_BOARD;
         Hash = stdStartHash;
         PawnHash = stdStartPawnHash;
+	StandardPosition = true;
     }
     else {
         if (startPositionTemplate == NULL){
@@ -675,6 +754,7 @@ Position::StdStart (void)
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // Position::IsStdStart
 //   Returns true if the position is the standard starting position.
+//   In Chess960, non-standard starts are assumed to be Chess960 games
 bool
 Position::IsStdStart ()
 {
@@ -782,11 +862,10 @@ void
 Position::GenPieceMoves (MoveList * mlist, squareT fromSq,
                          SquareSet * sqset, bool capturesOnly)
 {
-    colorT c = ToMove;
     pieceT p = Board[fromSq];
     pieceT ptype = piece_Type(p);
+    colorT c = ToMove;
     ASSERT (p != EMPTY  &&  ptype != KING  &&  ptype != PAWN);
-
     if (ptype == KNIGHT) {
         GenKnightMoves (mlist, c, fromSq, sqset, capturesOnly);
         return;
@@ -816,12 +895,11 @@ Position::GenerateMoves (MoveList * mlist, pieceT pieceType,
 {
     bool genNonCaptures = (genType & GEN_NON_CAPS);
     bool capturesOnly = !genNonCaptures;
-
-	if (LegalMoves.Size() > 0 && pieceType == EMPTY && genType == GEN_ALL_MOVES) {
-		if(mlist != NULL)
-			memcpy (mlist, &LegalMoves, sizeof(MoveList));
-		return;
-	}
+    if (LegalMoves.Size() > 0 && pieceType == EMPTY && genType == GEN_ALL_MOVES) {
+        if(mlist != NULL)
+            memcpy (mlist, &LegalMoves, sizeof(MoveList));
+        return;
+    }
 
     uint mask = 0;
     if (pieceType != EMPTY) {
@@ -832,9 +910,9 @@ Position::GenerateMoves (MoveList * mlist, pieceT pieceType,
     }
 
     // Use the objects own move list if none was provided:
-	if( mlist == NULL)
-		mlist = &LegalMoves;
-	mlist->Clear();
+    if( mlist == NULL)
+        mlist = &LegalMoves;
+    mlist->Clear();
 
     // Compute which pieces of the side to move are pinned to the king:
     CalcPins();
@@ -862,6 +940,7 @@ Position::GenerateMoves (MoveList * mlist, pieceT pieceType,
         squareT sq = List[ToMove][x];
         pieceT p = Board[sq];
         pieceT ptype = piece_Type(p);
+
         if (! (mask & (1 << ptype))) { continue; }
         directionT pinned = Pinned[x];
 
@@ -900,9 +979,10 @@ Position::GenerateMoves (MoveList * mlist, pieceT pieceType,
         bool castling = !numChecks;
         GenKingMoves (mlist, genType, castling);
     }
+    if (pieceType == EMPTY && genType == GEN_ALL_MOVES && mlist != NULL)
+        memcpy (&LegalMoves, mlist, sizeof(MoveList));
+    
 
-	if (pieceType == EMPTY && genType == GEN_ALL_MOVES && mlist != NULL)
-		memcpy (&LegalMoves, mlist, sizeof(MoveList));
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -980,7 +1060,7 @@ Position::IsLegalMove (simpleMoveT * sm) {
             // The move must be castling, or illegal.
             if (IsKingInCheck()) { return false; }
             MoveList mlist;
-            GenCastling (&mlist);
+            Gen960Castling (&mlist);
             return (mlist.Find(sm) >= 0);
         }
     }
@@ -1112,7 +1192,7 @@ Position::MatchLegalMove (MoveList * mlist, pieceT mask, squareT target)
                 if (CalcNumChecks (kingSq) > 0)  { tryMove = 0; }
                 Board[*sqPtr] = p;
                 Board[target] = captured;
-                if (tryMove == 1)  { AddLegalMove (mlist, *sqPtr, target, EMPTY); }
+                if (tryMove == 1)  { AddLegalMove (mlist, *sqPtr, target, EMPTY, false); }
             }
         }
     }
@@ -1233,7 +1313,7 @@ Position::MatchPawnMove (MoveList * mlist, fyleT fromFyle, squareT to, pieceT pr
     }
 
     if (legal == 1) {
-        AddLegalMove (mlist, from, to, promote2);
+        AddLegalMove (mlist, from, to, promote2, false);
         return OK;
     }
     return ERROR_InvalidMove;
@@ -1248,78 +1328,26 @@ Position::MatchPawnMove (MoveList * mlist, fyleT fromFyle, squareT to, pieceT pr
 errorT
 Position::MatchKingMove (MoveList * mlist, squareT target)
 {
+    bool islegalmove = false;
     mlist->Clear();
-    squareT kingSq = GetKingSquare(ToMove);
-    sint diff = (int)target - (int) kingSq;
-
-    // Valid diffs are: -9, -8, -7, -2, -1, 1, 2, 7, 8, 9. (-2,2: Castling)
-
-    if (diff < -9  ||  diff > 9) { return ERROR_InvalidMove; }
-    if (diff > -7  &&  diff < -2) { return ERROR_InvalidMove; }
-    if (diff > 2  &&  diff < 7) { return ERROR_InvalidMove; }
-    if (diff == 0) { return ERROR_InvalidMove; }
-
-    if (diff == 2) { // KingSide Castling
-        if (kingSq != (ToMove == WHITE ? E1 : E8)) {
-            return ERROR_InvalidMove;
-        }
-        if (StrictCastling  &&  ! GetCastling (ToMove, KSIDE)) {
-            return ERROR_InvalidMove;
-        }
-
-        // XXX We also need to verify that the target square does not
-        //     lie adjacent to the location of the enemy king!
-
-        if (Board[kingSq + 1] != EMPTY  ||  Board[kingSq + 2] != EMPTY
-            ||  CalcNumChecks(kingSq) > 0
-            ||  CalcNumChecks(kingSq + 1) > 0
-            ||  CalcNumChecks(kingSq + 2) > 0) {
-            return ERROR_InvalidMove;
-        }
-        AddLegalMove (mlist, kingSq, target, EMPTY);
-        return OK;
+    genMovesT allmoves = GEN_ALL_MOVES;
+    MoveList tmlist;
+    tmlist.Clear();
+    GenKingMoves(&tmlist, allmoves, true);
+    
+    for (uint i=0; i < tmlist.Size(); i++) {
+       simpleMoveT * sm = tmlist.Get(i);
+       if (sm->to == target) {
+	 mlist->Add(sm);
+	 islegalmove = true;
+       }
     }
-
-    if (diff == -2) { // Queenside Castling
-        if (kingSq != (ToMove == WHITE ? E1 : E8)) {
-            return ERROR_InvalidMove;
-        }
-        if (StrictCastling  &&  ! GetCastling (ToMove, QSIDE)) {
-            return ERROR_InvalidMove;
-        }
-        if (Board[kingSq - 1] != EMPTY  ||  Board[kingSq - 2] != EMPTY
-            ||  Board[kingSq - 3] != EMPTY
-            ||  CalcNumChecks(kingSq) > 0
-            ||  CalcNumChecks(kingSq - 1) > 0
-            ||  CalcNumChecks(kingSq - 2) > 0) {
-            return ERROR_InvalidMove;
-        }
-        AddLegalMove (mlist, kingSq, target, EMPTY);
-        return OK;
+    
+    if (islegalmove) {
+      return OK;
+    } else {
+      return ERROR_InvalidMove;
     }
-    pieceT captured = Board[target];
-    if (piece_Color(captured) == ToMove) {
-        // Capturing a friendly piece!
-        return ERROR_InvalidMove;
-    }
-
-    // Now make the move on the Board and Material lists, and see if it
-    // leaves the King in check:
-    // XXX We should also check for adjacency to enemy King!!
-
-    Board[target] = piece_Make(ToMove, KING);
-    Board[kingSq] = EMPTY;
-    if (captured != EMPTY) { Material[captured]--; }
-    uint legal = 0;
-    if (CalcNumChecks(target) == 0) { legal = 1; }
-    if (captured != EMPTY) { Material[captured]++; }
-    Board[target] = captured;
-    Board[kingSq] = piece_Make(ToMove, KING);
-    if (legal == 1) {
-        AddLegalMove (mlist, kingSq, target, EMPTY);
-        return OK;
-    }
-    return ERROR_InvalidMove;
 }
 
 
@@ -1803,18 +1831,22 @@ Position::IsPromoMove (squareT from, squareT to)
 void
 Position::DoSimpleMove (simpleMoveT * sm)
 {
-    ASSERT (sm != NULL);
+   ASSERT (sm != NULL);
     squareT from = sm->from;
     squareT to = sm->to;
     pieceT p = Board[from];
     pieceT ptype = piece_Type(p);
     colorT enemy = color_Flip(ToMove);
     ASSERT (p != EMPTY);
-
     // update move fields that (maybe) have not yet been set:
-
+    
     sm->pieceNum = ListPos[from];
-    sm->capturedPiece = Board[to];
+
+    if (sm->castling960 != true) {
+      sm->capturedPiece = Board[to];
+    } else { 
+      sm->capturedPiece = EMPTY;
+    }
     sm->capturedSquare = to;
     sm->castleFlags = Castling;
     sm->epSquare = EPTarget;
@@ -1822,8 +1854,8 @@ Position::DoSimpleMove (simpleMoveT * sm)
 
     HalfMoveClock++;
     PlyCounter++;
-	LegalMoves.Clear();
-
+    LegalMoves.Clear();
+    
     // Check for a null (empty) move:
     if (isNullMove(sm)) {
         ToMove = enemy;
@@ -1857,8 +1889,8 @@ Position::DoSimpleMove (simpleMoveT * sm)
         Material[sm->capturedPiece]--;
         HalfMoveClock = 0;
         RemoveFromBoard (sm->capturedPiece, sm->capturedSquare);
-    }
-
+     }
+ 
     // handle promotion:
 
     if (sm->promote != EMPTY) {
@@ -1869,32 +1901,54 @@ Position::DoSimpleMove (simpleMoveT * sm)
         Material[p]++;
         AddToBoard (p, from);
     }
-
+   
     // now make the move:
-    List[ToMove][sm->pieceNum] = to;
-    ListPos[to] = sm->pieceNum;
-    RemoveFromBoard (p, from);
-    AddToBoard (p, to);
+   if (sm->castling960 != true) {
+     List[ToMove][sm->pieceNum] = to;
+     ListPos[to] = sm->pieceNum;
+     RemoveFromBoard (p, from);
+     AddToBoard (p, to);
+ }
 
     // handle Castling:
-
-    if (ptype == KING  &&  square_Fyle(from) == E_FYLE  &&
-            (square_Fyle(to) == C_FYLE  ||  square_Fyle(to) == G_FYLE)) {
-        squareT rookfrom, rookto;
-        pieceT rook = piece_Make (ToMove, ROOK);
-        if (square_Fyle(to) == C_FYLE) {
-            rookfrom = to - 2;
-            rookto = to + 1;
+    if (sm->castling960 == true && ptype == KING &&
+         (square_Fyle(to) == C_FYLE  ||  square_Fyle(to) == G_FYLE)) {
+      squareT rookfrom, rookto;
+      pieceT rook = piece_Make (ToMove, ROOK);
+      if (square_Fyle(to) == C_FYLE) {
+        rookto = to + 1;
+        if (ToMove == WHITE) {
+          for (int i = H1; i >= A1; i--) {
+            if (Board[i] == WR) {rookfrom = i;}
+          }
         } else {
-            rookfrom = to + 1;
-            rookto = to - 1;
+          for (int i = H8; i >= A8; i--) {
+           if (Board[i] == BR) {rookfrom = i;}
+          }
         }
-        ListPos[rookto] = ListPos[rookfrom];
-        List[ToMove][ListPos[rookto]] = rookto;
-        RemoveFromBoard (rook, rookfrom);
-        AddToBoard (rook, rookto);
+      } else {
+        rookto = to - 1;
+        if (ToMove == WHITE) {
+          for (int i = A1; i <= H1; i++) {
+            if (Board[i] == WR) { rookfrom = i; }
+          }
+        } else {
+          for (int i = A8; i <= H8; i++) {
+            if (Board[i] == BR) {rookfrom = i;}
+          }
+        }
+      }
+   
+      ListPos[rookto] = ListPos[rookfrom];
+      List[ToMove][ sm->pieceNum] = to;
+      List[ToMove][ListPos[rookto]] = rookto;
+      ListPos[to] = sm->pieceNum;
+ 
+      RemoveFromBoard960 (p, from);
+      RemoveFromBoard960 (rook, rookfrom);
+      AddToBoard960 (p, to);
+      AddToBoard960 (rook, rookto);
     }
-
     // Handle clearing of castling flags:
 
     if (Castling) {
@@ -1904,15 +1958,15 @@ Position::DoSimpleMove (simpleMoveT * sm)
         }
         // See if a rook moved or was captured:
         if (ToMove == WHITE) {
-            if (from == A1)  { SetCastling (WHITE, QSIDE, false); }
-            if (from == H1)  { SetCastling (WHITE, KSIDE, false); }
-            if (to == A8)    { SetCastling (BLACK, QSIDE, false); }
-            if (to == H8)    { SetCastling (BLACK, KSIDE, false); }
+            if (from == WQRStart)  { SetCastling (WHITE, QSIDE, false); }
+            if (from == WKRStart)  { SetCastling (WHITE, KSIDE, false); }
+            if (to == BQRStart)    { SetCastling (BLACK, QSIDE, false); }
+            if (to == BKRStart)    { SetCastling (BLACK, KSIDE, false); }
         } else {
-            if (from == A8)  { SetCastling (BLACK, QSIDE, false); }
-            if (from == H8)  { SetCastling (BLACK, KSIDE, false); }
-            if (to == A1)    { SetCastling (WHITE, QSIDE, false); }
-            if (to == H1)    { SetCastling (WHITE, KSIDE, false); }
+            if (from == BQRStart)  { SetCastling (BLACK, QSIDE, false); }
+            if (from == BKRStart)  { SetCastling (BLACK, KSIDE, false); }
+            if (to == WQRStart)    { SetCastling (WHITE, QSIDE, false); }
+            if (to == WKRStart)    { SetCastling (WHITE, KSIDE, false); }
         }
     }
 
@@ -1934,17 +1988,17 @@ Position::DoSimpleMove (simpleMoveT * sm)
         }
         HalfMoveClock = 0; // 50-move clock resets on pawn moves.
     }
-
     ToMove = enemy;
 
+    
+    
 #ifdef ASSERTIONS
     // Do a SLOW, careful check for corruption:
     if (AssertPos() != OK) {
         abort();
     }
 #endif
-
-    return;
+  return;
 }
 
 
@@ -1955,7 +2009,7 @@ Position::DoSimpleMove (simpleMoveT * sm)
 void
 Position::UndoSimpleMove (simpleMoveT * m)
 {
-    ASSERT (m != NULL);
+   ASSERT (m != NULL);
     squareT from = m->from;
     squareT to = m->to;
     pieceT p = Board[to];
@@ -1965,13 +2019,13 @@ Position::UndoSimpleMove (simpleMoveT * m)
     PlyCounter--;
     ToMove = color_Flip(ToMove);
     m->pieceNum = ListPos[to];
-	LegalMoves.Clear();
-
+    LegalMoves.Clear();
+    
     // Check for a null move:
     if (isNullMove(m)) {
         return;
     }
-
+ 
     // Handle a capture: insert piece back into piecelist.
     // This works for EP captures too, since the square of the captured
     // piece is in the "capturedSquare" field rather than assuming the
@@ -1987,7 +2041,7 @@ Position::UndoSimpleMove (simpleMoveT * m)
         Material[m->capturedPiece]++;
         Count[c]++;
     }
-
+ 
     // handle promotion:
 
     if (m->promote != EMPTY) {
@@ -1997,9 +2051,9 @@ Position::UndoSimpleMove (simpleMoveT * m)
         Material[p]++;
         AddToBoard (p, to);
     }
-
+ 
     // now make the move:
-
+  if (m->castling960 != true) {
     List[ToMove][m->pieceNum] = from;
     ListPos[from] = m->pieceNum;
     RemoveFromBoard (p, to);
@@ -2007,33 +2061,46 @@ Position::UndoSimpleMove (simpleMoveT * m)
     if (m->capturedPiece != EMPTY) {
         AddToBoard (m->capturedPiece, m->capturedSquare);
     }
-
-    // handle Castling:
-
-    if ((piece_Type(p) == KING) && square_Fyle(from) == E_FYLE
-            && (square_Fyle(to) == C_FYLE || square_Fyle(to) == G_FYLE)) {
-        squareT rookfrom, rookto;
-        pieceT rook = (ToMove == WHITE? WR : BR);
-        if (square_Fyle(to) == C_FYLE) {
-            rookfrom = to - 2;   rookto = to + 1;
-        } else {
-            rookfrom = to + 1;   rookto = to - 1;
-        }
-        ListPos[rookfrom] = ListPos[rookto];
-        List[ToMove][ListPos[rookto]] = rookfrom;
-        RemoveFromBoard (rook, rookto);
-        AddToBoard (rook, rookfrom);
+ 
+  }
+  // handle Castling:
+  if ((piece_Type(p) == KING) && m->castling960 == true && (square_Fyle(to) == C_FYLE || square_Fyle(to) == G_FYLE)) {
+    squareT rookfrom, rookto;
+    pieceT rook = (ToMove == WHITE? WR : BR);
+    if (square_Fyle(to) == C_FYLE) {
+      if (ToMove == WHITE) {
+        rookfrom = WQRStart;
+      } else {
+        rookfrom = BQRStart;
+      }
+      rookto = to + 1;
+    } else {
+      if (ToMove == WHITE) {
+        rookfrom = WKRStart;
+      } else {
+        rookfrom = BKRStart;
+      }
+      rookto = to - 1;
     }
+  
+    ListPos[rookfrom] = ListPos[rookto];
+    List[ToMove][ListPos[rookto]] = rookfrom;
+    List[ToMove][ m->pieceNum] = from;
+    ListPos[from] = m->pieceNum;
+   
+    RemoveFromBoard960 (p, to);
+    RemoveFromBoard960 (rook, rookto);
+    AddToBoard960 (p, from);
+    AddToBoard960 (rook, rookfrom);  
+  }
 
 #ifdef ASSERTIONS
     if (AssertPos() != OK) {
         abort();
     }
 #endif
-
     return;
 }
-
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // Position::RelocatePiece():
@@ -2052,8 +2119,8 @@ Position::RelocatePiece (squareT fromSq, squareT toSq)
 
     // If squares are identical, just return success:
     if (fromSq == toSq) { return OK; }
-
-	LegalMoves.Clear();
+    
+    LegalMoves.Clear();
 
     pieceT piece = Board[fromSq];
     pieceT ptype = piece_Type(piece);
@@ -2157,11 +2224,11 @@ Position::MakeSANString (simpleMoveT * m, char * s, sanFlagT flag)
         if (isNullMove(m)) {
             //*c++ = 'n'; *c++ = 'u'; *c++ = 'l'; *c++ = 'l';
             *c++ = '-'; *c++ = '-';
-        } else
-        if ((square_Fyle(from)==E_FYLE) && (square_Fyle(to)==G_FYLE)) {
+        } else 
+        if (m->castling960 == true && (square_Fyle(to)==G_FYLE)) {
             *c++ = 'O'; *c++ = '-'; *c++ = 'O';
         } else
-        if ((square_Fyle(from)==E_FYLE) && (square_Fyle(to)==C_FYLE)) {
+        if (m->castling960 == true && (square_Fyle(to)==C_FYLE)) {
             *c++ = 'O'; *c++ = '-'; *c++ = 'O'; *c++ = '-'; *c++ = 'O';
         } else {  // regular King move
             *c++ = 'K';
@@ -2218,7 +2285,7 @@ Position::MakeSANString (simpleMoveT * m, char * s, sanFlagT flag)
     // Now do the check or mate symbol:
     if (flag != SAN_NO_CHECKTEST) {
         // Now we make the move to test for check:
-		MoveList backup = LegalMoves;
+        MoveList backup = LegalMoves;
         DoSimpleMove (m);
         if (CalcNumChecks (GetKingSquare()) > 0) {
             char ch = '+';
@@ -2230,7 +2297,7 @@ Position::MakeSANString (simpleMoveT * m, char * s, sanFlagT flag)
             *c++ = ch;
         }
         UndoSimpleMove (m);
-		LegalMoves = backup;
+        LegalMoves = backup;
     }
     *c = 0;
 }
@@ -2243,13 +2310,12 @@ void
 Position::MakeUCIString (simpleMoveT * m, char * s)
 {
     ASSERT (m != NULL  &&  s != NULL);
-
     // Make sure m->pieceNum is updated:
     m->pieceNum = ListPos[m->from];
     pieceT  p    = piece_Type (Board[List[ToMove][m->pieceNum]]);
+    pieceT king, rook;
     squareT from = List[ToMove][m->pieceNum];
     squareT to   = m->to;
-
     char * c     = s;
 
     if (from == to && to != NULL_SQUARE) {
@@ -2258,6 +2324,26 @@ Position::MakeUCIString (simpleMoveT * m, char * s)
       return;
     }
 
+    if (m->castling960) {
+      if (ToMove == WHITE ) {
+        king = WK; 
+        rook = WR;
+        if (to == C1) {
+	  to = WQRStart;
+        } else {
+	  to = WKRStart;
+        }
+      } else {
+        king = BK;
+        rook = BR;
+        if (to == C8) {
+	  to = BQRStart;
+        } else {
+	  to = BKRStart;
+        }
+      }
+    }
+    
     *c++ = square_FyleChar(from);
     *c++ = square_RankChar(from);
     *c++ = square_FyleChar(to);
@@ -2270,6 +2356,7 @@ Position::MakeUCIString (simpleMoveT * m, char * s)
 
     *c = 0;
 }
+
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // Position::ReadCoordMove():
@@ -2285,14 +2372,27 @@ Position::ReadCoordMove (simpleMoveT * m, const char * str, bool reverse)
     ASSERT (m != NULL  &&  str != NULL);
     fyleT fromFyle, toFyle;
     rankT fromRank, toRank;
-    squareT from, to;
+    squareT from, to, castle_square;
     pieceT promo = EMPTY;
+    bool castle = false;
+    bool uci = true;
+    pieceT king, rook;
 
     uint slen = strLength(str);
-    if (slen == 5) {
-        promo = piece_FromChar(toupper(str[4]));
-    } else if (slen != 4) { return ERROR_InvalidMove; }
+    if (slen == 6) {
+        promo = piece_FromChar(toupper(str[5]));
+    } else if (slen != 5 && slen != 4) { return ERROR_InvalidMove; }
 
+    if (slen == 5) {
+      if (str[4] == 't') {
+	castle = true;
+      } else if (str[4] == 'f') {
+	castle = false;
+      } else if (str[4] == 'u') {
+	uci = true;
+      }
+    }
+    
     fromFyle = fyle_FromChar (str[0]);
     fromRank = rank_FromChar (str[1]);
     from = square_Make (fromFyle, fromRank);
@@ -2302,11 +2402,36 @@ Position::ReadCoordMove (simpleMoveT * m, const char * str, bool reverse)
     toRank = rank_FromChar (str[3]);
     to = square_Make (toFyle, toRank);
     if (to == NS) { return ERROR_InvalidMove; }
-
     GenerateMoves();
+    
+    if (ToMove == WHITE ) {
+      king = WK; 
+      rook = WR;
+      if (WQRStart == to) {
+	castle_square = C1;
+      } else {
+	castle_square = G1;
+      }
+    } else {
+      king = BK;
+      rook = BR;
+      if (BQRStart == to) {
+	castle_square = C8;
+      } else {
+	castle_square = G8;
+      }
+    }
+    
+    if (Board[to] == rook && Board[from] == king) {
+      castle = true;
+      to = castle_square;
+    }
 
     for (uint i=0; i < LegalMoves.Size(); i++) {
         simpleMoveT * sm = LegalMoves.Get(i);
+        if (!(sm->castling960)) {
+          sm->castling960 = castle;
+        }
         if (sm->promote == promo) {
             if (sm->from == from  &&  sm->to == to) {
                 *m = *sm;
@@ -2334,11 +2459,10 @@ Position::ReadMove (simpleMoveT * m, const char * str, tokenT token)
     const char * s = str;
     char mStr [255];
     pieceT p;
-    squareT from = NS;
     squareT to = NS;
     rankT frRank, toRank;
     fyleT frFyle, toFyle;
-
+  
     MoveList mlist;
     mlist.Clear();
 
@@ -2371,7 +2495,7 @@ Position::ReadMove (simpleMoveT * m, const char * str, tokenT token)
     if (token == TOKEN_Move_Pawn  ||  token == TOKEN_Move_Promote) {
 
         pieceT promo = EMPTY;
-        if (token == TOKEN_Move_Promote) {
+	   if (token == TOKEN_Move_Promote) {
             // Last char must be Q/R/B/N.
             // Accept the move even if it is of the form "a8Q" not "a8=Q":
             // if (s[slen-2] != '=') { return ERROR_InvalidMove; }
@@ -2388,6 +2512,7 @@ Position::ReadMove (simpleMoveT * m, const char * str, tokenT token)
         } else {
             // Check if it is a coordinates-style move, in which case it
             // could be any piece:
+        
             if (slen >= 4  &&
                 islower(s[0])  &&  isdigit(s[1])  &&
                 islower(s[slen-2])  &&  isdigit(s[slen-1])) {
@@ -2397,7 +2522,7 @@ Position::ReadMove (simpleMoveT * m, const char * str, tokenT token)
         // First char MUST be a fyle:
         if (*s < 'a'  ||  *s > 'h')  {  return ERROR_InvalidMove; }
         frFyle = fyle_FromChar (s[0]);
-
+        
         // Check for the compact form of capture with no rank,
         // e.g. "ed" or "de=Q":
         if (slen == 2  &&  (s[1] >= 'a'  &&  s[1] <= 'h')) {
@@ -2410,15 +2535,16 @@ Position::ReadMove (simpleMoveT * m, const char * str, tokenT token)
                     return OK;
                 }
             }
-            // It is NOT a valid capture with no rank:
+        
+// It is NOT a valid capture with no rank:
             return ERROR_InvalidMove;
         }
-
+        
         toFyle = fyle_FromChar (s[slen-2]);
         toRank = rank_FromChar (s[slen-1]);
         to = square_Make (toFyle, toRank);
         if (to == NS) { return ERROR_InvalidMove; }
-
+        
         if (MatchPawnMove (&mlist, frFyle, to, promo) != OK) {
             return ERROR_InvalidMove;
         } else {
@@ -2426,17 +2552,28 @@ Position::ReadMove (simpleMoveT * m, const char * str, tokenT token)
             return OK;
         }
     }
-
+        
     // Here we handle piece moves, including castling
     if (token != TOKEN_Move_Piece) {  // Must be castling move
         ASSERT (token == TOKEN_Move_Castle_King  ||  token == TOKEN_Move_Castle_Queen);
-        from = (ToMove == WHITE ? E1 : E8);
-        if (GetKingSquare(ToMove) != from) { return ERROR_InvalidMove; }
-        to = (token == TOKEN_Move_Castle_King ? (from + 2) : (from - 2));
-        if (MatchKingMove (&mlist, to) != OK) {
+ 	if (token == TOKEN_Move_Castle_Queen) {
+	   if (ToMove == WHITE) { 
+	     to = C1;
+	   } else {
+	     to = C8;
+	   }
+	} else {
+	   if (ToMove == WHITE) { 
+	     to = G1;
+	   } else {
+	     to = G8;
+	   }
+	}
+	if (MatchKingMove (&mlist, to) != OK) {
             return ERROR_InvalidMove;
         } else {
-            *m = *(mlist.Get(0));
+	    *m = *(mlist.Get(0));
+	    m->castling960 = true;
             return OK;
         }
     }
@@ -2852,6 +2989,8 @@ Position::ReadFromFEN (const char * str)
     ASSERT (str != NULL);
     const char * s = str;
     int count = 0;
+    
+    squareT sq;
 
     if (firstCall) {
         firstCall = 0;
@@ -2910,6 +3049,8 @@ Position::ReadFromFEN (const char * str)
 
     if (! IsLegal()) { return ERROR_InvalidFEN; }
 
+    StandardPosition = true;
+    
     // Now the castling flags:
     while (isspace(*s)) { s++; }
     if (*s == '-') {
@@ -2928,21 +3069,96 @@ Position::ReadFromFEN (const char * str)
         }
     } else {
         while (!isspace(*s)  &&  *s != 0) {
-            switch (*s) {
+	    switch (*s) {
             case 'Q':
                 SetCastling (WHITE, QSIDE, true);
-                break;
+		for (int i = H1; i >= A1; i--) {
+		    if (Board[i] == WR) {
+		       SetWQRStart (i);
+		       if (i != A1) { StandardPosition = false; }
+		    }
+		 } 
+		 break;
             case 'q':
                 SetCastling (BLACK, QSIDE, true);
+		for (int i = H8; i >= A8; i--) {
+		    if (Board[i] == BR) {
+		       SetBQRStart (i);
+		       if (i != A8) { StandardPosition = false; }
+		    }
+		 } 
                 break;
             case 'K':
                 SetCastling (WHITE, KSIDE, true);
+		for (int i = A1; i <= H1; i++) {
+		    if (Board[i] == WR) {
+		       SetWKRStart (i);
+		       if (i != H1) { StandardPosition = false; }
+		    }
+		 } 
                 break;
             case 'k':
                 SetCastling (BLACK, KSIDE, true);
+		for (int i = A8; i <= H8; i++) {
+		    if (Board[i] == BR) {
+		       SetBKRStart (i);
+		       if (i != H8) { StandardPosition = false; }
+		    }
+		 } 
                 break;
             default:
-                return ERROR_InvalidFEN;
+		if (*s >= 'A' && *s <= 'H') {
+		  if (*s == 'A') {  sq = A1;}
+		  if (*s == 'B') {  sq = B1;}
+		  if (*s == 'C') {  sq = C1;}
+		  if (*s == 'D') {  sq = D1;}
+		  if (*s == 'E') {  sq = E1;}
+		  if (*s == 'F') {  sq = F1;}
+		  if (*s == 'G') {  sq = G1;}
+		  if (*s == 'H') {  sq = H1;}
+		  for (int i = sq; i <= H1; i++) {
+		     if (Board[i] == WK) {
+		       SetCastling (WHITE, QSIDE, true); 
+		       SetWQRStart (sq);
+		       if (i != A1) { StandardPosition = false; }
+		    }
+		  }
+		  for (int i = sq; i >= A1; i--) {
+		     if (Board[i] == WK) {
+		       SetCastling (WHITE, KSIDE, true);
+		       SetWKRStart (sq);
+		       if (i != H1) { StandardPosition = false; }
+		     }
+		  }
+		} else {
+		  if (*s >= 'a' && *s <= 'h') {
+		  if (*s == 'a') {  sq = A8;}
+		  if (*s == 'b') {  sq = B8;}
+		  if (*s == 'c') {  sq = C8;}
+		  if (*s == 'd') {  sq = D8;}
+		  if (*s == 'e') {  sq = E8;}
+		  if (*s == 'f') {  sq = F8;}
+		  if (*s == 'g') {  sq = G8;}
+		  if (*s == 'h') {  sq = H8;}
+		  for (int i = sq; i <= H8; i++) {
+		     if (Board[i] == BK) {
+		       SetCastling (BLACK, QSIDE, true);
+		       SetBQRStart (sq);
+		       if (i != A8) { StandardPosition = false; }
+		     }
+		  }
+		  for (int i = sq; i >= A8; i--) {
+		     if (Board[i] == BK) {
+		       SetCastling (BLACK, KSIDE, true);
+		       SetBKRStart (sq);		       
+		       if (i != H8) { StandardPosition = false; }
+		    }
+		  }
+		    
+		} else {
+		    return ERROR_InvalidFEN;
+		  }
+		}
             }
             s++;
         }
@@ -3005,39 +3221,115 @@ Position::PrintFEN (char * str, uint flags)
     ASSERT (str != NULL);
     uint emptyRun, iRank, iFyle;
     pieceT * pBoard = Board;
+    char white[8] = {'A','B','C','D','E','F','G','H'};
+    char black[8] = {'a','b','c','d','e','f','g','h'};
+    bool outside;
     for (iRank = 0; iRank < 8; iRank++) {
         pBoard = &(Board[(7 - iRank) * 8]);
         emptyRun = 0;
         if (iRank > 0  &&  flags > FEN_COMPACT) { *str++ = '/'; }
         for (iFyle = 0; iFyle < 8; iFyle++, pBoard++) {
             if (*pBoard != EMPTY) {
-                if (emptyRun) { *str++ = (byte) emptyRun + '0'; }
+                if (emptyRun) { *str++ = (byte) emptyRun + '0';}
                 emptyRun = 0;
                 *str++ = PIECE_CHAR[*pBoard];
             } else {
                 emptyRun++;
             }
         }
-        if (emptyRun) { *str++ = (byte) emptyRun + '0'; }
+        if (emptyRun) { *str++ = (byte) emptyRun + '0';}
     }
-
+     *str = 0;
     if (flags > FEN_COMPACT) { *str++ = ' '; }
     *str++ = (ToMove == WHITE ? 'w' : 'b');
+    
     *str = 0;
-
+   
     if (flags >= FEN_CASTLING_EP) {
         // Add the castling flags and EP flag as well:
         *str++ = ' ';
         if (Castling == 0)  {
             *str++ = '-';
         } else {
-            if (GetCastling (WHITE, KSIDE))  { *str++ = 'K'; }
-            if (GetCastling (WHITE, QSIDE))  { *str++ = 'Q'; }
-            if (GetCastling (BLACK, KSIDE))  { *str++ = 'k'; }
-            if (GetCastling (BLACK, QSIDE))  { *str++ = 'q'; }
+            if (GetCastling (WHITE, KSIDE))  { 
+	      if ((flags & FEN_XFEN) == 4) {
+	        outside = true;
+	        for (int square = H1; square > WKRStart; square--) {
+		  if (Board[square] == WR) { outside = false; }
+	        }
+	        if (outside) {
+	  	  *str++ = 'K'; 
+	        } else {
+		  *str++ = white[square_Fyle(WKRStart)];
+	        }
+	      } else {
+	        if (StandardPosition) {
+		  *str++ = 'K';
+	        } else {
+		  *str++ = white[square_Fyle(WKRStart)];
+	        }
+	      }
+	    }
+            if (GetCastling (WHITE, QSIDE))  {
+	      if ((flags & FEN_XFEN) == 4) {
+	        outside = true;
+	        for (int square = A1; square < WQRStart; square++) {
+		  if (Board[square] == WR) { outside = false; }
+	        }
+	        if (outside) {
+	  	  *str++ = 'Q'; 
+	        } else {
+		  *str++ = white[square_Fyle(WQRStart)];
+	        }
+	      } else {
+	        if (StandardPosition) {
+		  *str++ = 'Q';
+	        } else {
+		  *str++ = white[square_Fyle(WQRStart)];
+	        }
+	      }
+	    }
+            if (GetCastling (BLACK, KSIDE))  {
+	      if ((flags & FEN_XFEN) == 4) {
+	        outside = true;
+	        for (int square = H8; square > BKRStart; square--) {
+	  	  if (Board[square] == BR) { outside = false; }
+	        }
+	        if (outside) {
+		  *str++ = 'k'; 
+	        } else {
+		  *str++ = black[square_Fyle(BKRStart)];
+	        } 
+	      } else {
+	        if (StandardPosition) {
+		  *str++ = 'k';
+	        } else {
+		  *str++ = black[square_Fyle(BKRStart)];
+	        }
+	      }
+	    }
+            if (GetCastling (BLACK, QSIDE))  {
+	      if ((flags & FEN_XFEN) == 4) {
+	        outside = true;
+	        for (int square = A8; square < BQRStart; square++) {
+	  	  if (Board[square] == BR) { outside = false; }
+	        }
+	        if (outside) {
+		  *str++ = 'q'; 
+	        } else {
+		  *str++ = black[square_Fyle(BQRStart)];
+	        }
+	      } else {
+	        if (StandardPosition) {
+		  *str++ = 'q';
+	        } else {
+		  *str++ = black[square_Fyle(BQRStart)];
+	        }
+	      }
+	    }
         }
         *str++ = ' ';
-
+   
         // Now the EP target square:
         if (EPTarget == NULL_SQUARE) {
             *str++ = '-';
@@ -3202,7 +3494,7 @@ Position::Compare (Position * p)
 void
 Position::CopyFrom (Position * src)
 {
-  memcpy (this, src, sizeof(Position));
+    memcpy (this, src, sizeof(Position));
 }
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -3239,7 +3531,7 @@ Position::Random (const char * material)
     pieceT pieces [32];         // List of pieces excluding kings
     uint nPieces[2] = {0, 0};   // Number of pieces per side excluding kings.
     uint total = 0;             // Total number of pieces excluding kings.
-	LegalMoves.Clear();
+    LegalMoves.Clear();
 
     colorT side = WHITE;
 

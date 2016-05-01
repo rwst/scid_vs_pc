@@ -1696,5 +1696,8 @@ translate E UriRejectedDetail {Only the listed file types can be handled:}
 translate E EmptyUriList {Drop content is empty.}
 translate E SelectionOwnerDidntRespond {Timeout during drop action: selection owner didn't respond.}
 
+# Ask about ambiguous castling in chess 960
+translate E DidYouCastle {Did you castle?}
+
 }
 # end of english.tcl
