@@ -35,3 +35,25 @@
 *.rej
 *~
 
+Makefile
+engines/phalanx/phalanx
+engines/toga/src/.depend
+engines/toga/src/fruit
+pgnfix
+pgnscid
+sc_addmove
+sc_eco
+sc_epgn
+sc_import
+sc_remote
+sc_spell
+sc_tree
+scid
+scidlet
+scidpgn
+scidt
+scmerge
+spliteco
+tcl/sharedir.tcl
+tcscid
+tkscid
